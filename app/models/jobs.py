@@ -80,6 +80,84 @@ class AssetAlignment:
 
 
 @dataclass(slots=True)
+class AspectRatioRisk:
+    """
+    Risk assessment for resizing to a specific aspect ratio.
+
+    This captures model-assisted predictions about how problematic a given
+    resize will be based on the detected banner content.
+    """
+
+    output_size: OutputSize
+    # Overall risk score in [0, 1] where 0 = safe, 1 = high risk of distortion.
+    risk_score: float
+    # Individual risk factors contributing to the overall score.
+    content_clipping_risk: float  # Risk of cropping faces/text/logos
+    layout_stress_risk: float  # Risk of extreme stretching or compression
+    saliency_loss_risk: float  # Risk of losing important visual content
+    # Human-readable explanation of the risk assessment.
+    reasoning: str
+    # Deterministic strategy class assigned based on risk profile.
+    strategy_class: str
+
+
+@dataclass(slots=True)
+class LayoutPlan:
+    """
+    Concrete layout plan for a specific output size.
+
+    This captures the deterministic decisions about how to transform the master
+    banner into the target size while preserving important content.
+    """
+
+    output_size: OutputSize
+    strategy_class: str
+    # Anchor point: which content region to preserve and center on.
+    # If None, use geometric center.
+    anchor_region: Region | None = None
+    # Crop region in source banner coordinates (x, y, width, height).
+    # If None, no crop is needed (pure resize or padding).
+    crop_region: Region | None = None
+    # Scaling decisions: "fit" (letterbox), "fill" (crop), "stretch" (distort).
+    scaling_mode: str = "fill"
+    # Background expansion zones for adaptive padding (list of regions where
+    # background can be extended/regenerated).
+    expansion_zones: List[Region] = field(default_factory=list)
+    # Protected regions that must not be cropped or distorted.
+    protected_regions: List[Region] = field(default_factory=list)
+    # Human-readable explanation of the layout decisions.
+    reasoning: str = ""
+
+
+@dataclass(slots=True)
+class QualityCheck:
+    """
+    Quality validation result for a generated output.
+
+    This captures automated quality checks performed on the generated banner
+    to ensure it meets minimum quality standards and flag issues for review.
+    """
+
+    output_size: OutputSize
+    # Overall quality score in [0, 1] where 1 = perfect, 0 = failed.
+    quality_score: float
+    # Individual quality metrics.
+    content_preservation_score: float  # How well protected content was preserved
+    aspect_ratio_accuracy: float  # How close to target aspect ratio
+    visual_quality_score: float  # Checks for artifacts, color shifts, etc.
+    # Confidence in the output quality [0, 1].
+    confidence: float
+    # List of warnings or issues detected.
+    warnings: List[str] = field(default_factory=list)
+    # Whether this output needs manual review.
+    needs_manual_review: bool = False
+    # Human-readable explanation of quality assessment.
+    reasoning: str = ""
+    # Path to the generated output file (for reference).
+    output_path: str | None = None
+
+
+@dataclass(slots=True)
 class Job:
     """
     Internal representation of a banner resize job.
@@ -102,5 +180,12 @@ class Job:
     asset_alignment: List[AssetAlignment] = field(default_factory=list)
     # Aspect-ratio and layout planning metadata.
     aspect_ratio_buckets: Dict[str, List[OutputSize]] = field(default_factory=dict)
+    # Risk assessments per output size (AI Step C).
+    aspect_ratio_risks: List[AspectRatioRisk] = field(default_factory=list)
+    # Concrete layout plans per output size (AI Step D).
+    layout_plans: List[LayoutPlan] = field(default_factory=list)
+    # Quality validation results per output (AI Step F).
+    quality_checks: List[QualityCheck] = field(default_factory=list)
+    # Legacy layout plan (deprecated, kept for backward compatibility).
     layout_plan: Dict[str, str] = field(default_factory=dict)
 
