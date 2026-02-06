@@ -1,0 +1,43 @@
+Metadata-Version: 2.4
+Name: banner-builder-api
+Version: 0.1.0
+Summary: Backend service for an AI-powered content-aware banner resizing SaaS.
+Author-email: AI Backend Engineer <dev@example.com>
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.30.0
+Requires-Dist: pydantic>=2.7.0
+Requires-Dist: numpy>=1.26.0
+Requires-Dist: opencv-python>=4.9.0.80
+Requires-Dist: Pillow>=10.0.0
+Requires-Dist: pytesseract>=0.3.10
+Requires-Dist: torch>=2.3.0
+Requires-Dist: torchvision>=0.18.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0.0; extra == "dev"
+
+# Banner Builder API
+
+Backend service for an AI-powered SaaS that performs content-aware banner resizing.
+
+## Tech Stack
+
+- **Language**: Python 3.11+
+- **Framework**: FastAPI (async-first)
+- **Server**: Uvicorn
+
+## Local Development
+
+Create and activate a virtual environment, then install dependencies using `pip`:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Run the development server:
+
+```bash
+uvicorn app.main:app --reload
+```
+
