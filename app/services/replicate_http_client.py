@@ -11,6 +11,8 @@ import time
 from typing import Optional
 import base64
 from io import BytesIO
+from pathlib import Path
+from datetime import datetime
 
 import numpy as np
 import cv2
@@ -18,6 +20,21 @@ from PIL import Image
 import requests
 
 logger = logging.getLogger(__name__)
+
+# Output log file
+OUTPUT_LOG = Path("output.txt")
+
+# Retry configuration
+MAX_RETRIES = 2
+RETRY_DELAY = 2  # seconds
+RETRY_BACKOFF = 2  # exponential backoff multiplier
+
+
+def log_to_file(message: str):
+    """Append message to output.txt with timestamp."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(OUTPUT_LOG, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {message}\n")
 
 
 class ReplicateHTTPClient:
@@ -38,8 +55,9 @@ class ReplicateHTTPClient:
         self.base_url = "https://api.replicate.com/v1"
         
         if not self.api_token:
+            message = "⚠️  REPLICATE API TOKEN NOT FOUND - AI inpainting DISABLED"
             print("\n" + "="*60)
-            print("⚠️  REPLICATE API TOKEN NOT FOUND")
+            print(message)
             print("="*60)
             print("AI inpainting will be DISABLED")
             print("System will use edge replication fallback")
@@ -49,20 +67,25 @@ class ReplicateHTTPClient:
             print("  3. Restart server")
             print("="*60 + "\n")
             logger.warning("REPLICATE_API_TOKEN not set. Replicate features will be unavailable.")
+            log_to_file(message)
+            log_to_file("System will use FALLBACK (edge replication) for all jobs")
             self.available = False
             return
         
         # Token found
+        message = "✅ REPLICATE API TOKEN FOUND - AI inpainting ENABLED"
         print("\n" + "="*60)
-        print("✅ REPLICATE API TOKEN FOUND")
+        print(message)
         print("="*60)
         print(f"Token: {self.api_token[:15]}...")
         
         # Validate token format
         if not self.api_token.startswith("r8_"):
-            print("⚠️  WARNING: Token doesn't start with 'r8_'")
+            warning = "⚠️  WARNING: Token doesn't start with 'r8_' - might be invalid"
+            print(warning)
             print("   This might not be a valid Replicate token")
             print("   Get a valid token from: https://replicate.com/account/api-tokens")
+            log_to_file(warning)
         
         print("✓ Using HTTP API client (Python 3.14 compatible)")
         print("✓ AI inpainting is ENABLED")
@@ -71,6 +94,9 @@ class ReplicateHTTPClient:
         
         self.available = True
         logger.info("Replicate HTTP client initialized successfully")
+        log_to_file(message)
+        log_to_file("Using model: twn39/lama")
+        log_to_file("Ready to process jobs with AI inpainting")
 
     def is_available(self) -> bool:
         """Check if Replicate client is properly configured."""
@@ -96,77 +122,164 @@ class ReplicateHTTPClient:
             Inpainted image as numpy array, or None if operation fails
         """
         if not self.is_available():
-            print("\n🔄 BYPASSING REPLICATE - Using edge replication fallback")
+            message = "🔄 BYPASSING REPLICATE - Using FALLBACK (edge replication)"
+            print(f"\n{message}")
             logger.warning("Replicate not available. Inpainting skipped.")
+            log_to_file(message)
             return None
 
-        try:
-            # Convert numpy arrays to PIL Images
-            pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            pil_mask = Image.fromarray(mask)
+        # Retry logic for transient errors
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                return self._attempt_inpainting(image, mask, prompt, model, attempt)
+            except requests.exceptions.HTTPError as e:
+                status_code = e.response.status_code if e.response else 0
+                
+                # Don't retry on client errors (except 429 rate limit)
+                if 400 <= status_code < 500 and status_code != 429:
+                    error_msg = f"❌ REPLICATE CLIENT ERROR ({status_code}): {str(e)} - Using FALLBACK"
+                    print(f"\n{error_msg}")
+                    logger.error(f"Replicate client error: {e}")
+                    log_to_file(error_msg)
+                    return None
+                
+                # Retry on server errors or rate limits
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_DELAY * (RETRY_BACKOFF ** attempt)
+                    retry_msg = f"⏳ Retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES})..."
+                    print(f"{retry_msg}")
+                    log_to_file(retry_msg)
+                    time.sleep(delay)
+                else:
+                    error_msg = f"❌ REPLICATE FAILED after {MAX_RETRIES + 1} attempts: {str(e)} - Using FALLBACK"
+                    print(f"\n{error_msg}")
+                    logger.error(f"Replicate failed after retries: {e}")
+                    log_to_file(error_msg)
+                    return None
+                    
+            except Exception as e:
+                error_msg = f"❌ REPLICATE ERROR: {str(e)} - Using FALLBACK"
+                print(f"\n{error_msg}")
+                logger.error(f"Inpainting error: {e}")
+                log_to_file(error_msg)
+                return None
+        
+        return None
 
-            # Convert to data URIs for API
-            image_uri = self._image_to_data_uri(pil_image)
-            mask_uri = self._image_to_data_uri(pil_mask)
+    def _attempt_inpainting(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        prompt: str,
+        model: str,
+        attempt: int,
+    ) -> Optional[np.ndarray]:
+        """Single attempt at inpainting (used by retry logic)."""
+        # Convert numpy arrays to PIL Images
+        pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        pil_mask = Image.fromarray(mask)
 
-            print(f"\n🚀 CALLING REPLICATE API (HTTP)")
-            print(f"   Model: {model}")
-            print(f"   Image size: {image.shape[1]}x{image.shape[0]}")
-            print(f"   Mask coverage: {np.sum(mask > 0) / mask.size:.1%}")
-            logger.info(f"Calling Replicate HTTP API: {model}")
+        # Convert to data URIs for API
+        image_uri = self._image_to_data_uri(pil_image)
+        mask_uri = self._image_to_data_uri(pil_mask)
 
-            # Create prediction
-            headers = {
-                "Authorization": f"Token {self.api_token}",
-                "Content-Type": "application/json",
+        attempt_suffix = f" (attempt {attempt + 1})" if attempt > 0 else ""
+        info_msg = f"🚀 CALLING REPLICATE API{attempt_suffix} - Model: {model}, Size: {image.shape[1]}x{image.shape[0]}, Mask: {np.sum(mask > 0) / mask.size:.1%}"
+        print(f"\n{info_msg}")
+        print(f"   Model: {model}")
+        print(f"   Image size: {image.shape[1]}x{image.shape[0]}")
+        print(f"   Mask coverage: {np.sum(mask > 0) / mask.size:.1%}")
+        logger.info(f"Calling Replicate HTTP API: {model}")
+        log_to_file(info_msg)
+
+        # Create prediction
+        headers = {
+            "Authorization": f"Token {self.api_token}",
+            "Content-Type": "application/json",
+        }
+
+        # Use the correct API format for predictions
+        # Format: owner/model-name (without version)
+        model_path = self._get_model_version(model)
+
+        payload = {
+            "model": model_path,
+            "input": {
+                "image": image_uri,
+                "mask": mask_uri,
             }
+        }
 
-            payload = {
-                "version": self._get_model_version(model),
-                "input": {
-                    "image": image_uri,
-                    "mask": mask_uri,
-                }
-            }
+        # Create prediction
+        log_to_file(f"Creating prediction for model: {model_path}")
+        response = requests.post(
+            f"{self.base_url}/models/{model_path}/predictions",
+            headers=headers,
+            json={"input": payload["input"]},
+            timeout=30,
+        )
+        
+        # Handle specific error codes
+        if response.status_code == 422:
+            error_detail = response.json().get("detail", "Unknown error")
+            error_msg = f"❌ REPLICATE API ERROR (422): Invalid request - {error_detail}"
+            print(f"\n{error_msg}")
+            logger.error(f"Replicate API 422 error: {error_detail}")
+            log_to_file(error_msg)
+            log_to_file("Tip: Check if model exists and input format is correct")
+            raise requests.exceptions.HTTPError(error_msg, response=response)
+        
+        elif response.status_code == 429:
+            error_msg = "❌ REPLICATE RATE LIMITED (429): Too many requests"
+            print(f"\n{error_msg}")
+            logger.warning("Replicate API rate limited")
+            log_to_file(error_msg)
+            log_to_file("Tip: Wait a few minutes or upgrade your Replicate plan")
+            raise requests.exceptions.HTTPError(error_msg, response=response)
+        
+        elif response.status_code == 401:
+            error_msg = "❌ REPLICATE AUTH ERROR (401): Invalid token"
+            print(f"\n{error_msg}")
+            logger.error("Replicate API authentication failed")
+            log_to_file(error_msg)
+            log_to_file("Tip: Check your token at https://replicate.com/account/api-tokens")
+            raise requests.exceptions.HTTPError(error_msg, response=response)
+        
+        response.raise_for_status()
+        prediction = response.json()
 
-            # Create prediction
-            response = requests.post(
-                f"{self.base_url}/predictions",
-                headers=headers,
-                json=payload,
-                timeout=30,
-            )
-            response.raise_for_status()
-            prediction = response.json()
+        # Poll for completion
+        prediction_url = prediction["urls"]["get"]
+        output_url = self._wait_for_prediction(prediction_url, headers)
 
-            # Poll for completion
-            prediction_url = prediction["urls"]["get"]
-            output_url = self._wait_for_prediction(prediction_url, headers)
+        if output_url:
+            # Download result
+            inpainted = self._download_image(output_url)
+            if inpainted is not None:
+                success_msg = "✅ REPLICATE SUCCESS - AI inpainting completed"
+                print(f"{success_msg}")
+                logger.info("Inpainting completed successfully")
+                log_to_file(success_msg)
+                return inpainted
 
-            if output_url:
-                # Download result
-                inpainted = self._download_image(output_url)
-                if inpainted is not None:
-                    print(f"✅ REPLICATE SUCCESS - AI inpainting completed")
-                    logger.info("Inpainting completed successfully")
-                    return inpainted
-
-            print(f"\n❌ REPLICATE FAILED: No output received")
-            logger.error("Inpainting failed: No output received")
-            return None
-
-        except Exception as e:
-            print(f"\n❌ REPLICATE FAILED: {e}")
-            print("   Falling back to edge replication")
-            logger.error(f"Inpainting failed: {e}")
-            return None
+        fail_msg = "❌ REPLICATE FAILED: No output received"
+        print(f"\n{fail_msg}")
+        logger.error("Inpainting failed: No output received")
+        log_to_file(fail_msg)
+        return None
 
     def _get_model_version(self, model: str) -> str:
-        """Get the latest version hash for a model."""
-        # For twn39/lama, use a known working version
-        # In production, you'd query the API for the latest version
-        if model == "twn39/lama":
-            return "twn39/lama:latest"
+        """
+        Get the correct model version for Replicate API.
+        
+        For the HTTP API, we need to use the full model path without version suffix.
+        The API will use the latest version automatically.
+        """
+        # Remove any version suffix if present
+        if ":" in model:
+            model = model.split(":")[0]
+        
+        # Return just the model path (owner/name)
         return model
 
     def _image_to_data_uri(self, pil_image: Image.Image) -> str:

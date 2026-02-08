@@ -2103,7 +2103,19 @@ def _generate_adaptive_padding_output(
             output = inpainted_output
         else:
             # Fall back to edge replication
+            from pathlib import Path
+            from datetime import datetime
+            
+            fallback_msg = "📐 Using FALLBACK (edge replication) for background extension"
             logger.info("Using edge replication fallback for background extension")
+            print(f"{fallback_msg}")
+            
+            # Log to output.txt
+            output_log = Path("output.txt")
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(output_log, "a", encoding="utf-8") as f:
+                f.write(f"[{timestamp}] {fallback_msg}\n")
+            
             output = cv2.copyMakeBorder(
                 resized,
                 top=pad_top,
