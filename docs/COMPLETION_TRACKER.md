@@ -329,149 +329,21 @@
   - Confidence scoring is rule-based; a learned model could provide more nuanced confidence estimates based on historical data.
 - **Status**: ✅ Complete
 
-## AI Step G: Integrate AI Inpainting Model
-
-- **What was implemented**:
-  - Added `_generate_inpainted_background()` function in `app/services/analysis.py` to replace edge replication with AI-powered inpainting.
-  - Integrated Replicate's LaMa model for seamless background extension in adaptive padding strategies.
-  - Updated `_generate_adaptive_padding_output()` to use inpainting when available, with graceful fallback to edge replication.
-  - Added comprehensive error handling and logging for inpainting operations.
-  - Implemented mask generation for padding regions to guide the inpainting model.
-- **Why it was implemented this way**:
-  - LaMa (Large Mask Inpainting) provides fast, high-quality inpainting suitable for background extension without requiring text prompts.
-  - Using the existing Replicate client maintains consistency with the established AI integration pattern.
-  - Graceful fallback to edge replication ensures the system remains functional even if the AI model fails or is unavailable.
-  - Mask-based approach allows precise control over which regions should be inpainted vs preserved.
-  - Integration into the existing adaptive padding strategy preserves all existing interfaces and functionality.
-- **Files created or modified**:
-  - `app/services/analysis.py` (added `_generate_inpainted_background` function and updated `_generate_adaptive_padding_output`)
-- **Model choice and approach**:
-  - **Primary model**: LaMa (`twn39/lama`) - Fast, deterministic, no prompt required, excellent for background extension
-  - **Fallback strategy**: OpenCV edge replication if inpainting fails or is unavailable
-  - **Mask generation**: Creates binary mask where padding regions are marked for inpainting (255) and original content is preserved (0)
-  - **Quality preservation**: Original resized banner content is never modified, only padding regions are generated
-- **Testing results**:
-  - Successfully generates seamless backgrounds for adaptive padding strategies
-  - Graceful fallback to edge replication when Replicate API is unavailable
-  - Maintains all existing functionality and interfaces
-  - Logging provides clear visibility into inpainting success/failure
-- **Assumptions / limitations**:
-  - Requires Replicate API token for inpainting functionality; falls back to edge replication without token
-  - LaMa model works best with natural backgrounds; may struggle with complex patterns or text-heavy backgrounds
-  - Inpainting adds latency (~2-5 seconds per output) compared to edge replication
-  - Model costs ~$0.008 per run; for 6 output sizes per job, cost is ~$0.05 per job
-- **Status**: ✅ Complete
-
-## AI Step H: Eliminate Letterbox Strategy
-
-- **What was implemented**:
-  - Modified `_plan_focus_preserving_resize()` to use adaptive padding with expansion zones instead of plain letterbox.
-  - Updated `_plan_manual_review_recommended()` to use adaptive padding with expansion zones for high-risk cases.
-  - Updated strategy reasoning to reflect the use of AI-powered background extension instead of black bars.
-  - All letterbox strategies now use adaptive padding with seamless background generation.
-- **Why it was implemented this way**:
-  - Depends on Step G (AI inpainting) to provide seamless background extension instead of black bars.
-  - Adaptive padding with inpainting provides professional results without visible letterbox bars.
-  - All existing interfaces and data structures remain unchanged.
-  - The system automatically upgrades letterbox strategies to adaptive padding without breaking changes.
-- **Files created or modified**:
-  - `app/services/analysis.py` (modified `_plan_focus_preserving_resize` and `_plan_manual_review_recommended`)
-- **Testing results**:
-  - Extreme aspect ratios (160x600, 1200x300) now use adaptive padding instead of letterbox
-  - No black bars appear in generated outputs
-  - Background extension provides seamless results (with inpainting) or acceptable fallback (edge replication)
-  - Manual review cases still flagged appropriately with detailed reasoning
-- **Assumptions / limitations**:
-  - Some edge cases with very complex backgrounds may still benefit from manual review
-  - The system prioritizes avoiding black bars over perfect background matching
-  - Fallback to edge replication ensures outputs are always generated even without AI
-- **Status**: ✅ Complete
-
-## AI Step I: Implement Asset Compositing Pipeline
-
-- **What was implemented**:
-  - Added `_composite_assets_onto_output()` function in `app/services/analysis.py` to composite optional assets onto generated outputs.
-  - Integrated asset compositing into `generate_output_images()` so assets are automatically composited after generation.
-  - Implemented proportional scaling to maintain asset aspect ratios across different output sizes.
-  - Added alpha channel handling for transparent assets (PNG with transparency).
-  - Implemented positioning based on alignment decisions from Step B.
-  - Added graceful error handling for missing or invalid asset files.
-- **Why it was implemented this way**:
-  - Depends on Step B (asset alignment) which provides target regions for asset placement.
-  - Compositing after generation ensures assets are placed on the final output dimensions.
-  - Proportional scaling maintains asset quality and aspect ratio across all output sizes.
-  - Alpha blending preserves transparency for professional-looking overlays.
-  - Graceful error handling ensures job completion even if some assets fail to load.
-- **Files created or modified**:
-  - `app/services/analysis.py` (added `_composite_assets_onto_output` function and integrated into `generate_output_images`)
-- **Asset compositing approach**:
-  - **Scaling**: Assets are scaled proportionally based on output size relative to master banner
-  - **Positioning**: Uses target_region from AssetAlignment to place assets
-  - **Alpha blending**: Supports PNG transparency for seamless overlay
-  - **Fallback**: Skips failed assets and logs warnings without failing the entire job
-- **Testing results**:
-  - Successfully composites assets onto all output sizes
-  - Maintains asset aspect ratios across different outputs
-  - Handles transparency correctly for PNG assets
-  - Gracefully skips missing or invalid assets
-  - Logs clear warnings for debugging
-- **Assumptions / limitations**:
-  - Assets are assumed to be images (PNG, JPG, WEBP)
-  - Asset scaling is proportional to output size (may need refinement for very small outputs)
-  - No validation that assets don't overlap protected content (Step J will add this)
-  - Assets are composited in the order they appear in asset_alignment list
-- **Status**: ✅ Complete
-
-## AI Step J: Validate Asset Compositing Quality
-
-- **What was implemented**:
-  - Added `_validate_asset_compositing()` function in `app/services/analysis.py` to validate asset quality.
-  - Integrated asset validation into `validate_output_quality()` so it runs automatically for all outputs.
-  - Implemented checks for asset visibility (not outside bounds).
-  - Added validation for asset overlap with protected content (faces/text).
-  - Implemented asset scaling validation (not too small or too large).
-  - Added asset positioning balance checks.
-  - Extended `QualityCheck` to include asset-specific warnings.
-- **Why it was implemented this way**:
-  - Depends on Step I (asset compositing) to have assets placed on outputs.
-  - Running validation after compositing ensures assets are checked in their final positions.
-  - Checking overlap with protected content prevents assets from obscuring important content.
-  - Scaling validation ensures assets remain visible and professional-looking.
-  - Integration into existing quality validation maintains consistency with other checks.
-- **Files created or modified**:
-  - `app/services/analysis.py` (added `_validate_asset_compositing` function and integrated into `validate_output_quality`)
-- **Asset validation approach**:
-  - **Visibility**: Checks if assets are within output bounds and have reasonable size
-  - **Overlap detection**: Validates assets don't cover protected regions (faces/text/logos)
-  - **Scaling validation**: Ensures assets aren't too small (<2% of output) or too large (>50% of output)
-  - **Balance check**: Warns if all assets are clustered on one side
-  - **Score computation**: Combines all checks into asset_compositing_score
-- **Testing results**:
-  - Successfully detects assets outside bounds
-  - Correctly identifies overlap with protected content
-  - Validates asset scaling is reasonable
-  - Detects unbalanced asset positioning
-  - Integrates seamlessly with existing quality checks
-- **Assumptions / limitations**:
-  - Overlap detection uses simple bounding box intersection (not pixel-perfect)
-  - Balance check is basic (checks left/right and top/bottom distribution)
-  - Minimum size threshold (2%) may need tuning for different use cases
-  - Does not validate asset visual quality (blur, compression artifacts)
-- **Status**: ✅ Complete
-
 ## Next Steps
 
-The AI-powered background extension (Step G) is now complete. Next steps from the Designer Quality Roadmap:
-
-**Step H**: Eliminate Letterbox Strategy (Replace with Adaptive Padding)
-- Modify strategy planning to use adaptive padding instead of letterbox for extreme aspect ratios
-- Update risk scoring to never recommend letterbox (always use adaptive padding or crop)
-- Add configuration flag for backward compatibility
+The core AI integration pipeline (Steps A-F) is now complete. The system can:
+- Analyze banner content (faces, text, saliency)
+- Align optional assets
+- Score aspect ratio risks
+- Generate layout plans
+- Produce resized outputs
+- Validate output quality
 
 **Potential future enhancements**:
-1. **Asset compositing**: Integrate optional assets (logos, overlays) into generated outputs based on alignment decisions from Step B.
-2. **Parallel processing**: Move output generation to async workers or task queue for better performance on large jobs.
-3. **Advanced quality checks**: Add text readability validation, perceptual quality metrics, and compression artifact detection.
-4. **API enhancements**: Expose quality check results through the API so frontends can display warnings and manual review flags to users.
-5. **User feedback loop**: Collect user ratings on generated outputs to refine risk scoring and strategy selection over time.
+1. **AI-based background extension**: Replace edge replication with Stable Diffusion Inpainting or LaMa for seamless background generation in adaptive padding strategies.
+2. **Asset compositing**: Integrate optional assets (logos, overlays) into generated outputs based on alignment decisions from Step B.
+3. **Parallel processing**: Move output generation to async workers or task queue for better performance on large jobs.
+4. **Advanced quality checks**: Add text readability validation, perceptual quality metrics, and compression artifact detection.
+5. **API enhancements**: Expose quality check results through the API so frontends can display warnings and manual review flags to users.
+6. **User feedback loop**: Collect user ratings on generated outputs to refine risk scoring and strategy selection over time.
 

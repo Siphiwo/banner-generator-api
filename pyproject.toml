@@ -17,6 +17,8 @@ dependencies = [
   "pytesseract>=0.3.10",
   "torch>=2.3.0",
   "torchvision>=0.18.0",
+  "replicate>=0.25.0",
+  "requests>=2.31.0",
 ]
 
 [project.optional-dependencies]
