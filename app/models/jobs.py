@@ -48,13 +48,17 @@ class BannerAnalysis:
     faces: List[Region] = field(default_factory=list)
     text_regions: List[Region] = field(default_factory=list)
     logo_regions: List[Region] = field(default_factory=list)
+    # Detected border/frame regions (for responsive layout).
+    border_regions: List[Region] = field(default_factory=list)
     # Paths to derived masks/maps stored alongside the master banner:
     # - foreground_mask_path: binary foreground/background mask
     # - saliency_map_path: grayscale saliency heatmap
     # - protection_mask_path: binary mask of "protected" content (faces/text/logos)
+    # - background_mask_path: binary mask of pure background regions (for extension)
     foreground_mask_path: str | None = None
     saliency_map_path: str | None = None
     protection_mask_path: str | None = None
+    background_mask_path: str | None = None
 
 
 @dataclass(slots=True)

@@ -3,6 +3,9 @@ Direct HTTP client for Replicate API.
 
 This is a workaround for Python 3.14 compatibility issues with the official replicate package.
 Uses the Replicate HTTP API directly via requests.
+
+IMPORTANT: All Replicate API calls go through centralized rate limiting to respect
+Replicate's infrastructure and usage policies (max 600 req/min, exponential backoff on 429).
 """
 
 import logging
@@ -19,12 +22,20 @@ import cv2
 from PIL import Image
 import requests
 
+from app.services.rate_limiter import (
+    acquire_replicate_token,
+    report_replicate_429,
+    report_replicate_success,
+)
+
 logger = logging.getLogger(__name__)
 
 # Output log file
 OUTPUT_LOG = Path("output.txt")
 
 # Retry configuration
+# Note: Rate limiting is handled by centralized rate limiter
+# These retries are only for transient server errors (5xx), not rate limits (429)
 MAX_RETRIES = 2
 RETRY_DELAY = 2  # seconds
 RETRY_BACKOFF = 2  # exponential backoff multiplier
@@ -112,6 +123,11 @@ class ReplicateHTTPClient:
         """
         Inpaint masked regions using Replicate's LaMa model via HTTP API.
 
+        This method respects Replicate's rate limits through centralized rate limiting:
+        - Acquires token before making request
+        - Reports 429 errors for exponential backoff
+        - Reports success to gradually restore capacity
+
         Args:
             image: Input image as numpy array (BGR or RGB)
             mask: Binary mask where 255 = region to inpaint, 0 = preserve
@@ -128,22 +144,50 @@ class ReplicateHTTPClient:
             log_to_file(message)
             return None
 
+        # Acquire rate limit token before making request
+        logger.info("Acquiring rate limit token for Replicate API call...")
+        if not acquire_replicate_token(timeout=30.0):
+            error_msg = "❌ RATE LIMITER TIMEOUT - Using FALLBACK (edge replication)"
+            print(f"\n{error_msg}")
+            logger.error("Failed to acquire rate limit token within 30s")
+            log_to_file(error_msg)
+            return None
+
         # Retry logic for transient errors
         for attempt in range(MAX_RETRIES + 1):
             try:
-                return self._attempt_inpainting(image, mask, prompt, model, attempt)
+                result = self._attempt_inpainting(image, mask, prompt, model, attempt)
+                
+                # Report success to rate limiter
+                report_replicate_success()
+                
+                return result
+                
             except requests.exceptions.HTTPError as e:
                 status_code = e.response.status_code if e.response else 0
                 
-                # Don't retry on client errors (except 429 rate limit)
-                if 400 <= status_code < 500 and status_code != 429:
+                # Handle 429 (rate limit) specially
+                if status_code == 429:
+                    # Report to rate limiter for exponential backoff
+                    report_replicate_429()
+                    
+                    error_msg = f"❌ REPLICATE RATE LIMITED (429) - Exponential backoff triggered"
+                    print(f"\n{error_msg}")
+                    logger.error("Replicate API rate limited (429)")
+                    log_to_file(error_msg)
+                    
+                    # Don't retry immediately - rate limiter will handle backoff
+                    return None
+                
+                # Don't retry on other client errors (except 429)
+                if 400 <= status_code < 500:
                     error_msg = f"❌ REPLICATE CLIENT ERROR ({status_code}): {str(e)} - Using FALLBACK"
                     print(f"\n{error_msg}")
                     logger.error(f"Replicate client error: {e}")
                     log_to_file(error_msg)
                     return None
                 
-                # Retry on server errors or rate limits
+                # Retry on server errors
                 if attempt < MAX_RETRIES:
                     delay = RETRY_DELAY * (RETRY_BACKOFF ** attempt)
                     retry_msg = f"⏳ Retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES})..."

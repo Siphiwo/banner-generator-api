@@ -96,24 +96,165 @@ def _detect_text_regions(image: np.ndarray) -> List[Region]:
     return regions
 
 
+def _detect_border_regions(image: np.ndarray) -> List[Region]:
+    """
+    Detect decorative borders or frames in the banner.
+
+    Strategy:
+    - Analyze edge regions (10% from each side) for consistent patterns
+    - Detect solid color borders, gradient frames, or decorative elements
+    - Return regions that can be repositioned during responsive layout
+
+    This is a heuristic approach that works well for common banner designs.
+    """
+    h, w = image.shape[:2]
+    border_regions: List[Region] = []
+    
+    # Define edge thickness to analyze (10% of dimensions)
+    edge_thickness_x = int(w * 0.10)
+    edge_thickness_y = int(h * 0.10)
+    
+    # Minimum thickness for a border to be considered significant
+    min_border_thickness = 5
+    
+    def _analyze_edge_uniformity(edge_region: np.ndarray) -> float:
+        """
+        Analyze how uniform an edge region is.
+        Returns score in [0, 1] where 1 = very uniform (likely a border).
+        """
+        if edge_region.size == 0:
+            return 0.0
+        
+        # Calculate standard deviation of pixel values
+        std_dev = np.std(edge_region)
+        
+        # Low std dev = uniform = likely border
+        # Normalize: std_dev of 0-30 maps to score 1.0-0.0
+        uniformity_score = max(0.0, 1.0 - (std_dev / 30.0))
+        
+        return uniformity_score
+    
+    # Check left edge
+    left_edge = image[:, :edge_thickness_x]
+    left_uniformity = _analyze_edge_uniformity(left_edge)
+    if left_uniformity > 0.6:  # Threshold for border detection
+        border_regions.append(
+            Region(
+                x=0,
+                y=0,
+                width=edge_thickness_x,
+                height=h,
+                score=left_uniformity,
+                label="border-left"
+            )
+        )
+    
+    # Check right edge
+    right_edge = image[:, w - edge_thickness_x:]
+    right_uniformity = _analyze_edge_uniformity(right_edge)
+    if right_uniformity > 0.6:
+        border_regions.append(
+            Region(
+                x=w - edge_thickness_x,
+                y=0,
+                width=edge_thickness_x,
+                height=h,
+                score=right_uniformity,
+                label="border-right"
+            )
+        )
+    
+    # Check top edge
+    top_edge = image[:edge_thickness_y, :]
+    top_uniformity = _analyze_edge_uniformity(top_edge)
+    if top_uniformity > 0.6:
+        border_regions.append(
+            Region(
+                x=0,
+                y=0,
+                width=w,
+                height=edge_thickness_y,
+                score=top_uniformity,
+                label="border-top"
+            )
+        )
+    
+    # Check bottom edge
+    bottom_edge = image[h - edge_thickness_y:, :]
+    bottom_uniformity = _analyze_edge_uniformity(bottom_edge)
+    if bottom_uniformity > 0.6:
+        border_regions.append(
+            Region(
+                x=0,
+                y=h - edge_thickness_y,
+                width=w,
+                height=edge_thickness_y,
+                score=bottom_uniformity,
+                label="border-bottom"
+            )
+        )
+    
+    return border_regions
+
+
+def _identify_background_zones(
+    image: np.ndarray,
+    saliency_map: np.ndarray,
+    protection_mask: np.ndarray,
+    border_regions: List[Region],
+) -> np.ndarray:
+    """
+    Identify pure background regions suitable for AI-powered extension.
+
+    Strategy:
+    - Start with low-saliency regions (not visually important)
+    - Exclude protected content (faces, text, logos)
+    - Exclude detected borders (they'll be repositioned, not extended)
+    - Return binary mask where 255 = pure background, 0 = content/border
+
+    This mask guides the AI inpainting to focus on extendable regions.
+    """
+    h, w = image.shape[:2]
+    
+    # Start with low-saliency regions
+    _, low_saliency = cv2.threshold(saliency_map, 50, 255, cv2.THRESH_BINARY_INV)
+    
+    # Create background mask
+    background_mask = low_saliency.copy()
+    
+    # Exclude protected content
+    background_mask = cv2.bitwise_and(background_mask, cv2.bitwise_not(protection_mask))
+    
+    # Exclude border regions (they'll be repositioned, not extended)
+    for border in border_regions:
+        x1, y1 = max(0, border.x), max(0, border.y)
+        x2 = min(w, border.x + border.width)
+        y2 = min(h, border.y + border.height)
+        if x2 > x1 and y2 > y1:
+            cv2.rectangle(background_mask, (x1, y1), (x2, y2), color=0, thickness=-1)
+    
+    return background_mask
+
+
 def _compute_saliency_and_masks(
     image: np.ndarray,
     base_path: Path,
     faces: List[Region],
     text_regions: List[Region],
-) -> tuple[str | None, str | None, str | None]:
+    border_regions: List[Region],
+) -> tuple[str | None, str | None, str | None, str | None]:
     """
-    Compute a saliency map, a simple foreground mask, and a protection mask.
+    Compute a saliency map, foreground mask, protection mask, and background mask.
 
     The saliency map is computed using OpenCV's spectral residual method, which
-    is fast and deterministic. Foreground and protection masks are derived from
-    the saliency map and detected semantic regions.
+    is fast and deterministic. Foreground, protection, and background masks are
+    derived from the saliency map and detected semantic regions.
     """
     saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
     success, saliency_map = saliency.computeSaliency(image)
     if not success:
         logger.warning("Saliency computation failed; maps will not be persisted.")
-        return None, None, None
+        return None, None, None, None
 
     # Normalize to [0, 255] for visualization/persistence.
     saliency_norm = (saliency_map * 255).astype("uint8")
@@ -137,20 +278,30 @@ def _compute_saliency_and_masks(
     _draw_regions(protection_mask, faces, value=255)
     _draw_regions(protection_mask, text_regions, value=255)
 
+    # Identify pure background zones for AI extension
+    background_mask = _identify_background_zones(
+        image=image,
+        saliency_map=saliency_norm,
+        protection_mask=protection_mask,
+        border_regions=border_regions,
+    )
+
     # Persist maps alongside the master banner for later inspection and reuse.
     saliency_path = base_path.with_name(f"{base_path.stem}_saliency.png")
     foreground_path = base_path.with_name(f"{base_path.stem}_foreground.png")
     protection_path = base_path.with_name(f"{base_path.stem}_protection.png")
+    background_path = base_path.with_name(f"{base_path.stem}_background.png")
 
     try:
         cv2.imwrite(str(saliency_path), saliency_norm)
         cv2.imwrite(str(foreground_path), foreground_mask)
         cv2.imwrite(str(protection_path), protection_mask)
+        cv2.imwrite(str(background_path), background_mask)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to persist saliency/protection maps: %s", exc)
-        return None, None, None
+        return None, None, None, None
 
-    return str(foreground_path), str(saliency_path), str(protection_path)
+    return str(foreground_path), str(saliency_path), str(protection_path), str(background_path)
 
 
 def analyze_banner_content(job: Job) -> None:
@@ -160,8 +311,9 @@ def analyze_banner_content(job: Job) -> None:
     This is the entry point for Step A (Banner Content Analysis). It:
     - Detects faces
     - Detects text regions
+    - Detects decorative borders/frames
     - Computes a saliency map
-    - Derives simple foreground and protection masks
+    - Derives foreground, protection, and background masks
     """
     image = _load_image(job.master_banner_path)
     if image is None:
@@ -172,13 +324,15 @@ def analyze_banner_content(job: Job) -> None:
     height, width = image.shape[:2]
     faces = _detect_faces(image)
     text_regions = _detect_text_regions(image)
+    border_regions = _detect_border_regions(image)
 
     base_path = Path(job.master_banner_path)
-    foreground_path, saliency_path, protection_path = _compute_saliency_and_masks(
+    foreground_path, saliency_path, protection_path, background_path = _compute_saliency_and_masks(
         image=image,
         base_path=base_path,
         faces=faces,
         text_regions=text_regions,
+        border_regions=border_regions,
     )
 
     job.banner_analysis = BannerAnalysis(
@@ -187,9 +341,11 @@ def analyze_banner_content(job: Job) -> None:
         faces=faces,
         text_regions=text_regions,
         logo_regions=[],  # Logo/product detection will be added in a later refinement.
+        border_regions=border_regions,
         foreground_mask_path=foreground_path,
         saliency_map_path=saliency_path,
         protection_mask_path=protection_path,
+        background_mask_path=background_path,
     )
 
 
@@ -768,49 +924,115 @@ def _compute_expansion_zones(
     banner_h: int,
     target_w: int,
     target_h: int,
+    banner_analysis: BannerAnalysis,
 ) -> List[Region]:
     """
     Identify zones where background can be extended for adaptive padding.
 
-    Strategy:
-    - If target is wider than source, mark left/right edges for expansion.
-    - If target is taller than source, mark top/bottom edges for expansion.
+    Enhanced strategy:
+    - Analyze which edges need expansion based on aspect ratio change
+    - Use background mask to identify truly extendable regions
+    - Avoid expanding near borders (they'll be repositioned instead)
+    - Return precise expansion zones for AI inpainting
     """
     target_ratio = target_w / target_h
     banner_ratio = banner_w / banner_h
 
     zones: List[Region] = []
 
-    if target_ratio > banner_ratio:
-        # Target is wider: need horizontal expansion.
-        # Mark left and right edge zones (10% of banner width each).
-        edge_w = int(banner_w * 0.1)
-        zones.append(Region(x=0, y=0, width=edge_w, height=banner_h, score=1.0, label="expand-left"))
-        zones.append(
-            Region(
-                x=banner_w - edge_w,
-                y=0,
-                width=edge_w,
-                height=banner_h,
-                score=1.0,
-                label="expand-right",
-            )
-        )
-    else:
-        # Target is taller: need vertical expansion.
-        # Mark top and bottom edge zones (10% of banner height each).
-        edge_h = int(banner_h * 0.1)
-        zones.append(Region(x=0, y=0, width=banner_w, height=edge_h, score=1.0, label="expand-top"))
-        zones.append(
-            Region(
-                x=0,
-                y=banner_h - edge_h,
-                width=banner_w,
-                height=edge_h,
-                score=1.0,
-                label="expand-bottom",
-            )
-        )
+    # Load background mask to identify extendable regions
+    background_mask = _load_mask(banner_analysis.background_mask_path)
+    
+    # Determine which edges need expansion
+    needs_horizontal = target_ratio > banner_ratio
+    needs_vertical = target_ratio < banner_ratio
+
+    if needs_horizontal:
+        # Target is wider: need horizontal expansion
+        # Analyze left and right edges for extendability
+        edge_w = int(banner_w * 0.15)  # Analyze 15% of width
+        
+        # Check if left edge is extendable (has background content)
+        if background_mask is not None:
+            left_region = background_mask[:, :edge_w]
+            left_bg_ratio = np.sum(left_region > 0) / left_region.size if left_region.size > 0 else 0
+            
+            if left_bg_ratio > 0.3:  # At least 30% is background
+                zones.append(
+                    Region(
+                        x=0,
+                        y=0,
+                        width=edge_w,
+                        height=banner_h,
+                        score=left_bg_ratio,
+                        label="expand-left"
+                    )
+                )
+        
+        # Check if right edge is extendable
+        if background_mask is not None:
+            right_region = background_mask[:, banner_w - edge_w:]
+            right_bg_ratio = np.sum(right_region > 0) / right_region.size if right_region.size > 0 else 0
+            
+            if right_bg_ratio > 0.3:
+                zones.append(
+                    Region(
+                        x=banner_w - edge_w,
+                        y=0,
+                        width=edge_w,
+                        height=banner_h,
+                        score=right_bg_ratio,
+                        label="expand-right"
+                    )
+                )
+        
+        # Fallback if no background detected
+        if not zones:
+            zones.append(Region(x=0, y=0, width=edge_w, height=banner_h, score=0.5, label="expand-left"))
+            zones.append(Region(x=banner_w - edge_w, y=0, width=edge_w, height=banner_h, score=0.5, label="expand-right"))
+
+    elif needs_vertical:
+        # Target is taller: need vertical expansion
+        edge_h = int(banner_h * 0.15)
+        
+        # Check if top edge is extendable
+        if background_mask is not None:
+            top_region = background_mask[:edge_h, :]
+            top_bg_ratio = np.sum(top_region > 0) / top_region.size if top_region.size > 0 else 0
+            
+            if top_bg_ratio > 0.3:
+                zones.append(
+                    Region(
+                        x=0,
+                        y=0,
+                        width=banner_w,
+                        height=edge_h,
+                        score=top_bg_ratio,
+                        label="expand-top"
+                    )
+                )
+        
+        # Check if bottom edge is extendable
+        if background_mask is not None:
+            bottom_region = background_mask[banner_h - edge_h:, :]
+            bottom_bg_ratio = np.sum(bottom_region > 0) / bottom_region.size if bottom_region.size > 0 else 0
+            
+            if bottom_bg_ratio > 0.3:
+                zones.append(
+                    Region(
+                        x=0,
+                        y=banner_h - edge_h,
+                        width=banner_w,
+                        height=edge_h,
+                        score=bottom_bg_ratio,
+                        label="expand-bottom"
+                    )
+                )
+        
+        # Fallback if no background detected
+        if not zones:
+            zones.append(Region(x=0, y=0, width=banner_w, height=edge_h, score=0.5, label="expand-top"))
+            zones.append(Region(x=0, y=banner_h - edge_h, width=banner_w, height=edge_h, score=0.5, label="expand-bottom"))
 
     return zones
 
@@ -862,9 +1084,9 @@ def _plan_focus_preserving_resize(
     """
     banner_w, banner_h = banner_analysis.width, banner_analysis.height
 
-    # Compute expansion zones for adaptive padding
+    # Compute expansion zones for adaptive padding using enhanced logic
     expansion_zones = _compute_expansion_zones(
-        banner_w, banner_h, output_size.width, output_size.height
+        banner_w, banner_h, output_size.width, output_size.height, banner_analysis
     )
 
     return LayoutPlan(
@@ -947,7 +1169,7 @@ def _plan_adaptive_padding(
     banner_w, banner_h = banner_analysis.width, banner_analysis.height
 
     expansion_zones = _compute_expansion_zones(
-        banner_w, banner_h, output_size.width, output_size.height
+        banner_w, banner_h, output_size.width, output_size.height, banner_analysis
     )
 
     return LayoutPlan(
@@ -1030,9 +1252,9 @@ def _plan_manual_review_recommended(
     """
     banner_w, banner_h = banner_analysis.width, banner_analysis.height
 
-    # Compute expansion zones for adaptive padding
+    # Compute expansion zones for adaptive padding using enhanced logic
     expansion_zones = _compute_expansion_zones(
-        banner_w, banner_h, output_size.width, output_size.height
+        banner_w, banner_h, output_size.width, output_size.height, banner_analysis
     )
 
     return LayoutPlan(
@@ -1946,6 +2168,8 @@ def _generate_inpainted_background(
     pad_right: int,
     pad_top: int,
     pad_bottom: int,
+    banner_analysis: BannerAnalysis,
+    expansion_zones: List[Region],
 ) -> np.ndarray | None:
     """
     Generate seamless background extension using AI inpainting.
@@ -1953,11 +2177,15 @@ def _generate_inpainted_background(
     Creates a mask for padding regions and uses Replicate's LaMa model
     to generate seamless background content instead of edge replication.
 
+    Enhanced with context-aware prompts based on banner analysis.
+
     Args:
         resized_image: The resized banner image
         target_width: Target output width
         target_height: Target output height
         pad_left, pad_right, pad_top, pad_bottom: Padding amounts
+        banner_analysis: Banner analysis with detected regions
+        expansion_zones: Zones identified for expansion
 
     Returns:
         Inpainted image with seamless background, or None if inpainting fails
@@ -1999,14 +2227,18 @@ def _generate_inpainted_background(
             borderType=cv2.BORDER_REPLICATE,
         )
 
-        logger.info(f"Attempting AI inpainting for background extension (mask coverage: {np.sum(mask > 0) / mask.size:.1%})")
+        # Generate context-aware prompt based on banner analysis
+        prompt = _generate_inpainting_prompt(banner_analysis, expansion_zones)
+
+        logger.info(f"Attempting AI inpainting with prompt: '{prompt}' (mask coverage: {np.sum(mask > 0) / mask.size:.1%})")
         print(f"\n🎨 Attempting AI background extension...")
+        print(f"   Prompt: {prompt}")
 
         # Call Replicate inpainting
         inpainted = inpaint_background(
             image=base_image,
             mask=mask,
-            prompt="seamless background extension"
+            prompt=prompt
         )
 
         if inpainted is not None:
@@ -2021,6 +2253,59 @@ def _generate_inpainted_background(
     except Exception as e:
         logger.error(f"Inpainting error: {e} - falling back to edge replication")
         return None
+
+
+def _generate_inpainting_prompt(
+    banner_analysis: BannerAnalysis,
+    expansion_zones: List[Region],
+) -> str:
+    """
+    Generate context-aware prompt for AI inpainting based on banner analysis.
+
+    Strategy:
+    - Analyze the banner content to understand background type
+    - Generate specific prompts for different background patterns
+    - Default to generic seamless extension if unclear
+
+    Returns:
+        Context-aware prompt string for the inpainting model
+    """
+    # Check if banner has detected borders (likely decorative design)
+    has_borders = len(banner_analysis.border_regions) > 0
+    
+    # Check expansion direction
+    expansion_labels = [zone.label for zone in expansion_zones]
+    is_horizontal = any(label in expansion_labels for label in ["expand-left", "expand-right"])
+    is_vertical = any(label in expansion_labels for label in ["expand-top", "expand-bottom"])
+    
+    # Analyze background characteristics
+    if banner_analysis.background_mask_path:
+        background_mask = _load_mask(banner_analysis.background_mask_path)
+        if background_mask is not None:
+            bg_coverage = np.sum(background_mask > 0) / background_mask.size
+            
+            # High background coverage suggests simple/clean design
+            if bg_coverage > 0.6:
+                if has_borders:
+                    return "extend clean background seamlessly, preserve design aesthetic"
+                else:
+                    return "seamlessly extend solid or gradient background"
+            
+            # Medium background suggests mixed content
+            elif bg_coverage > 0.3:
+                if is_horizontal:
+                    return "extend background pattern horizontally, maintain visual consistency"
+                elif is_vertical:
+                    return "extend background pattern vertically, maintain visual consistency"
+                else:
+                    return "extend background pattern seamlessly"
+            
+            # Low background suggests content-heavy banner
+            else:
+                return "carefully extend background around content, preserve visual balance"
+    
+    # Default fallback prompt
+    return "seamless background extension"
 
 
 def _generate_adaptive_padding_output(
@@ -2096,6 +2381,8 @@ def _generate_adaptive_padding_output(
             pad_right=pad_right,
             pad_top=pad_top,
             pad_bottom=pad_bottom,
+            banner_analysis=banner_analysis,
+            expansion_zones=plan.expansion_zones,
         )
         
         if inpainted_output is not None:
