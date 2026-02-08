@@ -7,15 +7,17 @@ Requires-Python: >=3.11
 Description-Content-Type: text/markdown
 Requires-Dist: fastapi>=0.115.0
 Requires-Dist: uvicorn[standard]>=0.30.0
-Requires-Dist: pydantic>=2.7.0
+Requires-Dist: pydantic<3.0.0,>=2.7.0
+Requires-Dist: pydantic-settings>=2.0.0
 Requires-Dist: numpy>=1.26.0
 Requires-Dist: opencv-contrib-python>=4.9.0.80
 Requires-Dist: Pillow>=10.0.0
 Requires-Dist: pytesseract>=0.3.10
 Requires-Dist: torch>=2.3.0
 Requires-Dist: torchvision>=0.18.0
-Requires-Dist: replicate>=0.25.0
+Requires-Dist: replicate>=0.34.1
 Requires-Dist: requests>=2.31.0
+Requires-Dist: python-dotenv>=1.0.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0.0; extra == "dev"
 

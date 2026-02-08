@@ -1,0 +1,11 @@
+# Storage directories
+storage/jobs/
+
+# Environment files
+.env
+
+# Markdown files
+*.md
+
+# Documentation directory
+docs/

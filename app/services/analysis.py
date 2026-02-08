@@ -1766,6 +1766,41 @@ def generate_output_images(job: Job) -> None:
         logger.error("All output generation attempts failed for job %s", job.id)
     else:
         job.status = JobStatus.COMPLETED
+        
+        # Print summary
+        print("\n" + "="*60)
+        print(f"📊 JOB GENERATION SUMMARY")
+        print("="*60)
+        print(f"Job ID: {job.id}")
+        print(f"Outputs generated: {success_count}/{len(job.layout_plans)}")
+        
+        # Count strategies used
+        strategies = {}
+        replicate_used = False
+        for plan in job.layout_plans:
+            strategy = plan.strategy_class
+            strategies[strategy] = strategies.get(strategy, 0) + 1
+            if strategy == "adaptive-padding":
+                replicate_used = True
+        
+        print(f"\nStrategies used:")
+        for strategy, count in strategies.items():
+            print(f"  • {strategy}: {count} output(s)")
+        
+        if replicate_used:
+            print(f"\n🤖 AI Inpainting: Check logs above for Replicate usage")
+        else:
+            print(f"\n📐 AI Inpainting: Not needed (no adaptive padding)")
+        
+        # Quality summary
+        avg_quality = sum(qc.quality_score for qc in quality_checks) / len(quality_checks) if quality_checks else 0
+        needs_review = sum(1 for qc in quality_checks if qc.needs_manual_review)
+        
+        print(f"\nQuality:")
+        print(f"  • Average score: {avg_quality:.2f}")
+        print(f"  • Needs review: {needs_review}/{len(quality_checks)}")
+        print("="*60 + "\n")
+        
         logger.info(
             "Generated %d/%d outputs for job %s (quality checks: %d)",
             success_count,
@@ -1928,7 +1963,7 @@ def _generate_inpainted_background(
         Inpainted image with seamless background, or None if inpainting fails
     """
     try:
-        from app.services.replicate_client import inpaint_background
+        from app.services.replicate_http_client import inpaint_background
 
         # Create canvas with black padding (temporary)
         canvas = np.zeros((target_height, target_width, 3), dtype=np.uint8)
@@ -1965,6 +2000,7 @@ def _generate_inpainted_background(
         )
 
         logger.info(f"Attempting AI inpainting for background extension (mask coverage: {np.sum(mask > 0) / mask.size:.1%})")
+        print(f"\n🎨 Attempting AI background extension...")
 
         # Call Replicate inpainting
         inpainted = inpaint_background(
@@ -1975,9 +2011,11 @@ def _generate_inpainted_background(
 
         if inpainted is not None:
             logger.info("AI inpainting successful - seamless background generated")
+            print(f"✅ AI background extension successful\n")
             return inpainted
         else:
             logger.warning("AI inpainting failed - falling back to edge replication")
+            print(f"⚠️  Using edge replication fallback\n")
             return None
 
     except Exception as e:

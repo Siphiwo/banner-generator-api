@@ -37,18 +37,60 @@ class ReplicateClient:
             api_token: Replicate API token. If not provided, reads from REPLICATE_API_TOKEN env var.
         """
         self.api_token = api_token or os.environ.get("REPLICATE_API_TOKEN")
+        
         if not self.api_token:
+            print("\n" + "="*60)
+            print("⚠️  REPLICATE API TOKEN NOT FOUND")
+            print("="*60)
+            print("AI inpainting will be DISABLED")
+            print("System will use edge replication fallback")
+            print("\nTo enable AI inpainting:")
+            print("  1. Get token: https://replicate.com/account/api-tokens")
+            print("  2. Add to .env file: REPLICATE_API_TOKEN=your_token")
+            print("  3. Restart server")
+            print("="*60 + "\n")
             logger.warning(
                 "REPLICATE_API_TOKEN not set. Replicate features will be unavailable."
             )
+            self.replicate = None
+            self.available = False
+            return
+        
+        # Token found - try to initialize
+        print("\n" + "="*60)
+        print("✅ REPLICATE API TOKEN FOUND")
+        print("="*60)
+        print(f"Token: {self.api_token[:15]}...")
+        
+        # Validate token format (should start with r8_)
+        if not self.api_token.startswith("r8_"):
+            print("⚠️  WARNING: Token doesn't start with 'r8_'")
+            print("   This might not be a valid Replicate token")
+            print("   Get a valid token from: https://replicate.com/account/api-tokens")
         
         # Import replicate here to avoid hard dependency
         try:
             import replicate
             self.replicate = replicate.Replicate(api_token=self.api_token)
             self.available = True
-        except (ImportError, Exception) as e:
+            print("✓ Replicate client initialized successfully")
+            print("✓ AI inpainting is ENABLED")
+            print("✓ Using model: twn39/lama")
+            print("="*60 + "\n")
+            logger.info("Replicate client initialized successfully with API token")
+        except ImportError as e:
+            print(f"\n✗ ERROR: replicate package not installed")
+            print(f"  Run: pip install replicate")
+            print("="*60 + "\n")
             logger.warning(f"replicate package not available: {e}")
+            self.replicate = None
+            self.available = False
+        except Exception as e:
+            print(f"\n✗ ERROR: Failed to initialize Replicate client")
+            print(f"  Error: {e}")
+            print(f"  Check your token at: https://replicate.com/account/api-tokens")
+            print("="*60 + "\n")
+            logger.warning(f"Failed to initialize Replicate: {e}")
             self.replicate = None
             self.available = False
 
@@ -76,6 +118,7 @@ class ReplicateClient:
             Inpainted image as numpy array, or None if operation fails
         """
         if not self.is_available():
+            print("\n🔄 BYPASSING REPLICATE - Using edge replication fallback")
             logger.warning("Replicate not available. Inpainting skipped.")
             return None
 
@@ -88,6 +131,10 @@ class ReplicateClient:
             image_b64 = self._image_to_base64(pil_image)
             mask_b64 = self._image_to_base64(pil_mask)
 
+            print(f"\n🚀 CALLING REPLICATE API")
+            print(f"   Model: {model}")
+            print(f"   Image size: {image.shape[1]}x{image.shape[0]}")
+            print(f"   Mask coverage: {np.sum(mask > 0) / mask.size:.1%}")
             logger.info(f"Calling Replicate inpainting model: {model}")
 
             # Call Replicate API
@@ -111,10 +158,13 @@ class ReplicateClient:
                 logger.error(f"Unexpected output format from inpainting model: {type(output)}")
                 return None
 
+            print(f"✅ REPLICATE SUCCESS - AI inpainting completed")
             logger.info("Inpainting completed successfully")
             return inpainted
 
         except Exception as e:
+            print(f"\n❌ REPLICATE FAILED: {e}")
+            print("   Falling back to edge replication")
             logger.error(f"Inpainting failed: {e}")
             return None
 

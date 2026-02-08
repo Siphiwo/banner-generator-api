@@ -10,15 +10,17 @@ authors = [
 dependencies = [
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
-  "pydantic>=2.7.0",
+  "pydantic>=2.7.0,<3.0.0",
+  "pydantic-settings>=2.0.0",
   "numpy>=1.26.0",
   "opencv-contrib-python>=4.9.0.80",
   "Pillow>=10.0.0",
   "pytesseract>=0.3.10",
   "torch>=2.3.0",
   "torchvision>=0.18.0",
-  "replicate>=0.25.0",
+  "replicate>=0.34.1",
   "requests>=2.31.0",
+  "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
