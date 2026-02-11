@@ -118,7 +118,7 @@ class ReplicateHTTPClient:
         image: np.ndarray,
         mask: np.ndarray,
         prompt: str = "seamless background extension",
-        model: str = "twn39/lama",
+        model: str = "twn39/lama:2b91ca2340801c2a5be745612356fac36a17f698354a07f48a62d564d3b3a7a0",
     ) -> Optional[np.ndarray]:
         """
         Inpaint masked regions using Replicate's LaMa model via HTTP API.
@@ -153,7 +153,7 @@ class ReplicateHTTPClient:
             log_to_file(error_msg)
             return None
 
-        # Retry logic for transient errors
+        # Retry logic for transient errors (5xx only, not rate limits)
         for attempt in range(MAX_RETRIES + 1):
             try:
                 result = self._attempt_inpainting(image, mask, prompt, model, attempt)
@@ -166,20 +166,22 @@ class ReplicateHTTPClient:
             except requests.exceptions.HTTPError as e:
                 status_code = e.response.status_code if e.response else 0
                 
-                # Handle 429 (rate limit) specially
+                # Handle 429 (rate limit) - NO RETRY, let rate limiter handle backoff
                 if status_code == 429:
                     # Report to rate limiter for exponential backoff
                     report_replicate_429()
                     
-                    error_msg = f"❌ REPLICATE RATE LIMITED (429) - Exponential backoff triggered"
+                    error_msg = f"❌ REPLICATE RATE LIMITED (429) - Backoff applied, next request will wait"
                     print(f"\n{error_msg}")
-                    logger.error("Replicate API rate limited (429)")
+                    logger.error("Replicate API rate limited (429) - exponential backoff triggered")
                     log_to_file(error_msg)
+                    log_to_file("Rate limiter will enforce minimum 30s wait before next request")
                     
-                    # Don't retry immediately - rate limiter will handle backoff
+                    # Return immediately - do NOT retry
+                    # Rate limiter will handle backoff for subsequent requests
                     return None
                 
-                # Don't retry on other client errors (except 429)
+                # Don't retry on other client errors (4xx)
                 if 400 <= status_code < 500:
                     error_msg = f"❌ REPLICATE CLIENT ERROR ({status_code}): {str(e)} - Using FALLBACK"
                     print(f"\n{error_msg}")
@@ -187,18 +189,37 @@ class ReplicateHTTPClient:
                     log_to_file(error_msg)
                     return None
                 
-                # Retry on server errors
+                # Retry ONLY on server errors (5xx)
                 if attempt < MAX_RETRIES:
                     delay = RETRY_DELAY * (RETRY_BACKOFF ** attempt)
-                    retry_msg = f"⏳ Retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES})..."
+                    error_detail = str(e)
+                    if e.response:
+                        try:
+                            error_body = e.response.json()
+                            error_detail = f"{status_code}: {error_body.get('detail', error_body)}"
+                        except:
+                            error_detail = f"{status_code}: {e.response.text[:200]}"
+                    
+                    retry_msg = f"⏳ Server error ({error_detail}) - Retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES})..."
                     print(f"{retry_msg}")
                     log_to_file(retry_msg)
+                    log_to_file(f"Full error: {e}")
                     time.sleep(delay)
                 else:
-                    error_msg = f"❌ REPLICATE FAILED after {MAX_RETRIES + 1} attempts: {str(e)} - Using FALLBACK"
+                    error_detail = str(e)
+                    if e.response:
+                        try:
+                            error_body = e.response.json()
+                            error_detail = f"{status_code}: {error_body}"
+                        except:
+                            error_detail = f"{status_code}: {e.response.text[:500]}"
+                    
+                    error_msg = f"❌ REPLICATE FAILED after {MAX_RETRIES + 1} attempts - Using FALLBACK"
                     print(f"\n{error_msg}")
-                    logger.error(f"Replicate failed after retries: {e}")
+                    print(f"   Error details: {error_detail}")
+                    logger.error(f"Replicate failed after retries: {error_detail}")
                     log_to_file(error_msg)
+                    log_to_file(f"Full error: {error_detail}")
                     return None
                     
             except Exception as e:
@@ -247,24 +268,41 @@ class ReplicateHTTPClient:
         model_path = self._get_model_version(model)
 
         payload = {
-            "model": model_path,
+            "version": model_path,  # Use 'version' field for model identifier
             "input": {
                 "image": image_uri,
                 "mask": mask_uri,
             }
         }
 
-        # Create prediction
+        # Create prediction using the unified endpoint
         log_to_file(f"Creating prediction for model: {model_path}")
         response = requests.post(
-            f"{self.base_url}/models/{model_path}/predictions",
+            f"{self.base_url}/predictions",  # Unified endpoint for all models
             headers=headers,
-            json={"input": payload["input"]},
+            json=payload,
             timeout=30,
         )
         
         # Handle specific error codes
-        if response.status_code == 422:
+        if response.status_code == 404:
+            error_detail = "Model not found"
+            try:
+                error_body = response.json()
+                error_detail = error_body.get("detail", error_detail)
+            except:
+                pass
+            error_msg = f"❌ REPLICATE API ERROR (404): Model not found - {model_path}"
+            print(f"\n{error_msg}")
+            print(f"   Detail: {error_detail}")
+            print(f"   Tip: Check if model exists at https://replicate.com/{model_path}")
+            logger.error(f"Replicate API 404 error: {error_detail}")
+            log_to_file(error_msg)
+            log_to_file(f"Detail: {error_detail}")
+            log_to_file("Tip: Verify model name and that it's publicly accessible")
+            raise requests.exceptions.HTTPError(error_msg, response=response)
+        
+        elif response.status_code == 422:
             error_detail = response.json().get("detail", "Unknown error")
             error_msg = f"❌ REPLICATE API ERROR (422): Invalid request - {error_detail}"
             print(f"\n{error_msg}")
@@ -316,14 +354,21 @@ class ReplicateHTTPClient:
         """
         Get the correct model version for Replicate API.
         
-        For the HTTP API, we need to use the full model path without version suffix.
-        The API will use the latest version automatically.
-        """
-        # Remove any version suffix if present
-        if ":" in model:
-            model = model.split(":")[0]
+        The API expects either:
+        - owner/name (for official models)
+        - owner/name:version_hash (for community models)
+        - version_hash (64-character hash)
         
-        # Return just the model path (owner/name)
+        This method extracts the version hash if present, otherwise returns the model path.
+        """
+        # If model contains a colon, extract the version hash
+        if ":" in model:
+            parts = model.split(":")
+            if len(parts) == 2:
+                # Return the full version hash (after the colon)
+                return parts[1]
+        
+        # Return the model as-is (owner/name format)
         return model
 
     def _image_to_data_uri(self, pil_image: Image.Image) -> str:

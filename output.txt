@@ -1,48 +1,28 @@
-[2026-02-08 21:58:21] 🚀 CALLING REPLICATE API - Model: twn39/lama, Size: 300x50, Mask: 83.3%
-[2026-02-08 21:58:21] Creating prediction for model: twn39/lama
-[2026-02-08 21:58:22] ⏳ Retrying in 2s (attempt 1/2)...
-[2026-02-08 21:58:24] 🚀 CALLING REPLICATE API (attempt 2) - Model: twn39/lama, Size: 300x50, Mask: 83.3%
-[2026-02-08 21:58:24] Creating prediction for model: twn39/lama
-[2026-02-08 21:58:25] ❌ REPLICATE RATE LIMITED (429): Too many requests
-[2026-02-08 21:58:25] Tip: Wait a few minutes or upgrade your Replicate plan
-[2026-02-08 21:58:25] ⏳ Retrying in 4s (attempt 2/2)...
-[2026-02-08 21:58:29] 🚀 CALLING REPLICATE API (attempt 3) - Model: twn39/lama, Size: 300x50, Mask: 83.3%
-[2026-02-08 21:58:29] Creating prediction for model: twn39/lama
-[2026-02-08 21:58:29] ❌ REPLICATE RATE LIMITED (429): Too many requests
-[2026-02-08 21:58:29] Tip: Wait a few minutes or upgrade your Replicate plan
-[2026-02-08 21:58:29] ❌ REPLICATE FAILED after 3 attempts: ❌ REPLICATE RATE LIMITED (429): Too many requests - Using FALLBACK
-[2026-02-08 21:58:29] 📐 Using FALLBACK (edge replication) for background extension
-[2026-02-08 22:15:18] ✅ REPLICATE API TOKEN FOUND - AI inpainting ENABLED
-[2026-02-08 22:15:18] Using model: twn39/lama
-[2026-02-08 22:15:18] Ready to process jobs with AI inpainting
-[2026-02-08 22:15:18] 🚀 CALLING REPLICATE API - Model: twn39/lama, Size: 300x50, Mask: 83.3%
-[2026-02-08 22:15:18] Creating prediction for model: twn39/lama
-[2026-02-08 22:15:19] ⏳ Retrying in 2s (attempt 1/2)...
-[2026-02-08 22:15:21] 🚀 CALLING REPLICATE API (attempt 2) - Model: twn39/lama, Size: 300x50, Mask: 83.3%
-[2026-02-08 22:15:21] Creating prediction for model: twn39/lama
-[2026-02-08 22:15:22] ❌ REPLICATE RATE LIMITED (429): Too many requests
-[2026-02-08 22:15:22] Tip: Wait a few minutes or upgrade your Replicate plan
-[2026-02-08 22:15:22] ⏳ Retrying in 4s (attempt 2/2)...
-[2026-02-08 22:15:26] 🚀 CALLING REPLICATE API (attempt 3) - Model: twn39/lama, Size: 300x50, Mask: 83.3%
-[2026-02-08 22:15:26] Creating prediction for model: twn39/lama
-[2026-02-08 22:15:27] ❌ REPLICATE RATE LIMITED (429): Too many requests
-[2026-02-08 22:15:27] Tip: Wait a few minutes or upgrade your Replicate plan
-[2026-02-08 22:15:27] ❌ REPLICATE FAILED after 3 attempts: ❌ REPLICATE RATE LIMITED (429): Too many requests - Using FALLBACK
-[2026-02-08 22:15:27] 📐 Using FALLBACK (edge replication) for background extension
-[2026-02-08 22:32:21] ✅ REPLICATE API TOKEN FOUND - AI inpainting ENABLED
-[2026-02-08 22:32:21] Using model: twn39/lama
-[2026-02-08 22:32:21] Ready to process jobs with AI inpainting
-[2026-02-08 22:32:21] 🚀 CALLING REPLICATE API - Model: twn39/lama, Size: 300x50, Mask: 83.3%
-[2026-02-08 22:32:21] Creating prediction for model: twn39/lama
-[2026-02-08 22:32:21] ⏳ Retrying in 2s (attempt 1/2)...
-[2026-02-08 22:32:23] 🚀 CALLING REPLICATE API (attempt 2) - Model: twn39/lama, Size: 300x50, Mask: 83.3%
-[2026-02-08 22:32:24] Creating prediction for model: twn39/lama
-[2026-02-08 22:32:24] ❌ REPLICATE RATE LIMITED (429): Too many requests
-[2026-02-08 22:32:24] Tip: Wait a few minutes or upgrade your Replicate plan
-[2026-02-08 22:32:24] ⏳ Retrying in 4s (attempt 2/2)...
-[2026-02-08 22:32:28] 🚀 CALLING REPLICATE API (attempt 3) - Model: twn39/lama, Size: 300x50, Mask: 83.3%
-[2026-02-08 22:32:28] Creating prediction for model: twn39/lama
-[2026-02-08 22:32:29] ❌ REPLICATE RATE LIMITED (429): Too many requests
-[2026-02-08 22:32:29] Tip: Wait a few minutes or upgrade your Replicate plan
-[2026-02-08 22:32:29] ❌ REPLICATE FAILED after 3 attempts: ❌ REPLICATE RATE LIMITED (429): Too many requests - Using FALLBACK
-[2026-02-08 22:32:29] 📐 Using FALLBACK (edge replication) for background extension
+[2026-02-11 13:10:08] ✅ REPLICATE API TOKEN FOUND - AI inpainting ENABLED
+[2026-02-11 13:10:08] Using model: twn39/lama
+[2026-02-11 13:10:08] Ready to process jobs with AI inpainting
+[2026-02-11 13:10:08] 🚀 CALLING REPLICATE API - Model: twn39/lama, Size: 1200x500, Mask: 58.3%
+[2026-02-11 13:10:08] Creating prediction for model: twn39/lama
+[2026-02-11 13:10:11] ❌ REPLICATE API ERROR (422): Invalid request - The specified version does not exist (or perhaps you don't have permission to use it?)
+[2026-02-11 13:10:11] Tip: Check if model exists and input format is correct
+[2026-02-11 13:10:11] ⏳ Server error (❌ REPLICATE API ERROR (422): Invalid request - The specified version does not exist (or perhaps you don't have permission to use it?)) - Retrying in 2s (attempt 1/2)...
+[2026-02-11 13:10:11] Full error: ❌ REPLICATE API ERROR (422): Invalid request - The specified version does not exist (or perhaps you don't have permission to use it?)
+[2026-02-11 13:10:13] 🚀 CALLING REPLICATE API (attempt 2) - Model: twn39/lama, Size: 1200x500, Mask: 58.3%
+[2026-02-11 13:10:13] Creating prediction for model: twn39/lama
+[2026-02-11 13:10:15] ❌ REPLICATE RATE LIMITED (429): Too many requests
+[2026-02-11 13:10:15] Tip: Wait a few minutes or upgrade your Replicate plan
+[2026-02-11 13:10:15] ⏳ Server error (❌ REPLICATE RATE LIMITED (429): Too many requests) - Retrying in 4s (attempt 2/2)...
+[2026-02-11 13:10:15] Full error: ❌ REPLICATE RATE LIMITED (429): Too many requests
+[2026-02-11 13:10:19] 🚀 CALLING REPLICATE API (attempt 3) - Model: twn39/lama, Size: 1200x500, Mask: 58.3%
+[2026-02-11 13:10:19] Creating prediction for model: twn39/lama
+[2026-02-11 13:10:21] ❌ REPLICATE API ERROR (422): Invalid request - The specified version does not exist (or perhaps you don't have permission to use it?)
+[2026-02-11 13:10:21] Tip: Check if model exists and input format is correct
+[2026-02-11 13:10:21] ❌ REPLICATE FAILED after 3 attempts - Using FALLBACK
+[2026-02-11 13:10:21] Full error: ❌ REPLICATE API ERROR (422): Invalid request - The specified version does not exist (or perhaps you don't have permission to use it?)
+[2026-02-11 13:10:21] 📐 Using FALLBACK (edge replication) for background extension
+[2026-02-11 13:25:18] ✅ REPLICATE API TOKEN FOUND - AI inpainting ENABLED
+[2026-02-11 13:25:18] Using model: twn39/lama
+[2026-02-11 13:25:18] Ready to process jobs with AI inpainting
+[2026-02-11 13:25:18] 🚀 CALLING REPLICATE API - Model: twn39/lama:2b91ca2340801c2a5be745612356fac36a17f698354a07f48a62d564d3b3a7a0, Size: 1200x500, Mask: 58.3%
+[2026-02-11 13:25:18] Creating prediction for model: 2b91ca2340801c2a5be745612356fac36a17f698354a07f48a62d564d3b3a7a0
+[2026-02-11 13:26:10] ✅ REPLICATE SUCCESS - AI inpainting completed

@@ -11,6 +11,7 @@ import pytesseract
 
 from app.api.v1.schemas import JobStatus, OutputSize
 from app.models.jobs import AssetAlignment, AspectRatioRisk, BannerAnalysis, Job, LayoutPlan, QualityCheck, Region
+from app.services.psd_parser import PSDParser
 
 
 logger = logging.getLogger(__name__)
@@ -304,27 +305,112 @@ def _compute_saliency_and_masks(
     return str(foreground_path), str(saliency_path), str(protection_path), str(background_path)
 
 
+def _is_psd_file(file_path: str) -> bool:
+    """Check if a file is a PSD based on extension."""
+    return Path(file_path).suffix.lower() == ".psd"
+
+
+def _parse_psd_layers(job: Job) -> tuple[List[Region], List[Region], List[Region], List[Region]] | None:
+    """
+    Parse PSD file and extract semantic regions.
+    
+    Returns (faces, text_regions, logo_regions, border_regions) or None if parsing fails.
+    
+    This function implements the PSD layer parsing specification from
+    docs/PSD_INTEGRATION.md. It treats the PSD as a source-of-truth layout
+    document and extracts semantic regions based on layer naming conventions.
+    """
+    parser = PSDParser(job.master_banner_path)
+    
+    if not parser.parse():
+        logger.error(f"Failed to parse PSD file: {job.master_banner_path}")
+        return None
+    
+    # Log any warnings from the parser
+    for warning in parser.warnings:
+        logger.warning(f"PSD parsing warning: {warning}")
+    
+    # Export flattened image for saliency/mask computation
+    base_path = Path(job.master_banner_path)
+    flattened_path = base_path.with_name(f"{base_path.stem}_flattened.png")
+    
+    if not parser.export_flattened_image(str(flattened_path)):
+        logger.error("Failed to export flattened PSD image")
+        return None
+    
+    # Update job to use flattened image for CV processing
+    job._psd_original_path = job.master_banner_path
+    job._flattened_image_path = str(flattened_path)
+    
+    # Extract semantic regions from PSD layers
+    # Note: PSD layers override CV inference per the spec
+    faces = parser.get_regions_by_role("face")  # Explicit face labels in PSD
+    text_regions = parser.get_regions_by_role("text")
+    logo_regions = parser.get_regions_by_role("logo")
+    product_regions = parser.get_regions_by_role("product")
+    border_regions = parser.get_regions_by_role("border")
+    
+    # Combine logos and products into logo_regions for protection
+    logo_regions.extend(product_regions)
+    
+    # Add explicitly protected regions to logos (highest priority)
+    protected_regions = parser.get_regions_by_role("protected")
+    logo_regions.extend(protected_regions)
+    
+    logger.info(
+        f"PSD parsing complete: {len(text_regions)} text, "
+        f"{len(logo_regions)} logo/product, {len(border_regions)} border regions"
+    )
+    
+    return faces, text_regions, logo_regions, border_regions
+
+
 def analyze_banner_content(job: Job) -> None:
     """
     Run content-aware analysis on the master banner and attach results to the job.
 
     This is the entry point for Step A (Banner Content Analysis). It:
-    - Detects faces
-    - Detects text regions
+    - Detects if input is PSD and parses semantic layers (overrides CV)
+    - Detects faces (CV fallback if not in PSD)
+    - Detects text regions (CV fallback if not in PSD)
     - Detects decorative borders/frames
     - Computes a saliency map
     - Derives foreground, protection, and background masks
+    
+    PSD files are treated as source-of-truth per docs/PSD_INTEGRATION.md.
     """
-    image = _load_image(job.master_banner_path)
-    if image is None:
-        # Leave banner_analysis as None to make the failure explicit to callers.
-        job.banner_analysis = None
-        return
+    # Check if input is a PSD file
+    is_psd = _is_psd_file(job.master_banner_path)
+    
+    if is_psd:
+        logger.info(f"Detected PSD file: {job.master_banner_path}")
+        psd_result = _parse_psd_layers(job)
+        
+        if psd_result is None:
+            # PSD parsing failed, leave banner_analysis as None
+            job.banner_analysis = None
+            return
+        
+        faces, text_regions, logo_regions, border_regions = psd_result
+        
+        # Load the flattened image for saliency computation
+        image = _load_image(job._flattened_image_path)
+        if image is None:
+            job.banner_analysis = None
+            return
+    else:
+        # Standard image file - use CV-based detection
+        image = _load_image(job.master_banner_path)
+        if image is None:
+            job.banner_analysis = None
+            return
+        
+        faces = _detect_faces(image)
+        text_regions = _detect_text_regions(image)
+        logo_regions = []  # CV-based logo detection not yet implemented
+        border_regions = _detect_border_regions(image)
 
     height, width = image.shape[:2]
-    faces = _detect_faces(image)
-    text_regions = _detect_text_regions(image)
-    border_regions = _detect_border_regions(image)
 
     base_path = Path(job.master_banner_path)
     foreground_path, saliency_path, protection_path, background_path = _compute_saliency_and_masks(
@@ -340,7 +426,7 @@ def analyze_banner_content(job: Job) -> None:
         height=height,
         faces=faces,
         text_regions=text_regions,
-        logo_regions=[],  # Logo/product detection will be added in a later refinement.
+        logo_regions=logo_regions,
         border_regions=border_regions,
         foreground_mask_path=foreground_path,
         saliency_map_path=saliency_path,

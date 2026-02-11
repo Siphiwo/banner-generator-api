@@ -31,7 +31,7 @@ async def health_check() -> dict:
     summary="Create a new banner resize job",
 )
 async def create_job(
-    master_banner: UploadFile = File(..., description="Primary banner image."),
+    master_banner: UploadFile = File(..., description="Primary banner image (PNG, JPG, or PSD)."),
     additional_assets: list[UploadFile] | None = File(
         default=None,
         description="Optional additional assets such as logos or product images.",
@@ -48,12 +48,21 @@ async def create_job(
     Create a new banner resizing job.
 
     The client must send a multipart/form-data request containing:
-    - `master_banner`: required image file.
+    - `master_banner`: required image file (PNG, JPG, or PSD).
+      - For PSD files: Layer naming conventions are used to identify semantic
+        regions (text, logos, backgrounds). See docs/PSD_INTEGRATION.md.
     - `additional_assets`: optional list of extra files.
     - `outputs`: JSON-encoded list of desired output sizes.
 
-    For now this endpoint only validates the payload and returns a synthetic
-    job identifier; storage and processing are implemented in later steps.
+    PSD files are treated as source-of-truth layout documents. The parser
+    extracts semantic regions based on layer names:
+    - Background layers: `bg:`, `background:`, or group named `BG`/`BACKGROUND`
+    - Text layers: `text:`, `copy:`, or native Photoshop text layers
+    - Logo layers: `logo:`
+    - Product layers: `product:`, `hero:`
+    - Protected layers: `[protect]` or `[lock]` modifiers
+    
+    For standard image files (PNG/JPG), computer vision is used for analysis.
     """
     try:
         raw_outputs = json.loads(outputs)
